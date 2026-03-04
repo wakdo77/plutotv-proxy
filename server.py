@@ -4,8 +4,8 @@ PlutoTV Stream Proxy Server
 Lokaler HTTP-Proxy, der PlutoTV-Livestreams für VLC, Kodi IPTV Simple und Enigma2 bereitstellt.
 
 Endpunkte:
-  GET /playlist.m3u          – M3U-Playlist aller Kanäle
-  GET /live/<channel_id>     – Live-HLS-Stream (beste Variante, Segmente direkt vom CDN)
+  GET /playlist.m3u          - M3U-Playlist aller Kanäle
+  GET /live/<channel_id>     - Live-HLS-Stream (beste Variante, Segmente direkt vom CDN)
 
 Ablauf pro Stream-Request:
   1. Master-Playlist von PlutoTV holen (JWT wird serverseitig ergänzt)
@@ -24,6 +24,7 @@ import urllib.parse
 import threading
 import time
 from datetime import datetime, timezone
+import argparse
 
 import requests
 from flask import Flask, Response, abort
@@ -31,8 +32,6 @@ from flask import Flask, Response, abort
 # ─── Konfiguration ───────────────────────────────────────────────────────────
 
 HOST = "0.0.0.0"
-PORT = 8080
-PROXY_BASE = f"http://localhost:{PORT}"
 
 PLUTO_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -347,10 +346,34 @@ def live_stream(channel_id: str):
 # ─── Start ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="PlutoTV Stream Proxy")
+    parser.add_argument(
+        "--ip",
+        default="localhost",
+        help="IP-Adresse für Playlist-URLs (default: localhost)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port der Flask-App (default: 8080)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Flask Debug-Modus aktivieren",
+    )
+    args = parser.parse_args()
+
+    # Globale Konfiguration aus CLI-Argumenten setzen
+    PORT       = args.port
+    PROXY_BASE = f"http://{args.ip}:{args.port}"
+
     print(f"\n{'='*50}")
     print(f"  PlutoTV Stream Proxy")
     print(f"{'='*50}")
-    print(f"  Playlist : http://localhost:{PORT}/playlist.m3u")
-    print(f"  Test-Stream: http://localhost:{PORT}/live/69776b58036e883f39e5ab8a.m3u8")
+    print(f"  Playlist   : {PROXY_BASE}/playlist.m3u")
+    print(f"  Test-Stream: {PROXY_BASE}/live/69776b58036e883f39e5ab8a.m3u8")
+    print(f"  Debug      : {args.debug}")
     print(f"{'='*50}\n")
-    app.run(host=HOST, port=PORT, threaded=True)
+    app.run(host=HOST, port=PORT, threaded=not args.debug, debug=args.debug)
