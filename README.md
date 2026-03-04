@@ -42,11 +42,21 @@ pip install -r requirements.txt
 ## Starten
 
 ```bash
-python server.py
+python server.py [--ip <IP>] [--port <PORT>] [--debug]
 ```
 
-Beim Start werden Session-Daten geladen und die verfügbaren Kanäle abgerufen.  
-Der Server läuft dann auf `http://0.0.0.0:8080`.
+| Argument | Beschreibung | Default |
+|---|---|---|
+| `--ip` | IP-Adresse, die in Playlist-URLs eingebettet wird | `localhost` |
+| `--port` | Port der Flask-App | `8080` |
+| `--debug` | Flask Debug-Modus aktivieren | `false` |
+
+Beispiel für den Einsatz im Netzwerk (andere Geräte sollen zugreifen):
+```bash
+python server.py --ip 192.168.178.65 --port 8080
+```
+
+Beim Start werden Session-Daten geladen und die verfügbaren Kanäle abgerufen.
 
 ## Endpunkte
 
@@ -54,6 +64,7 @@ Der Server läuft dann auf `http://0.0.0.0:8080`.
 |---|---|
 | `GET /playlist.m3u` | M3U-Playlist aller Kanäle |
 | `GET /live/<channel_id>.m3u8` | Live-HLS-Stream (beste Qualität, AES-128) |
+| `GET /epg.xml` | XMLTV EPG-Feed *(in Entwicklung)* |
 
 ## Einrichtung in Playern
 
@@ -72,6 +83,10 @@ http://localhost:8080/playlist.m3u
 2. Einstellungen → M3U-Playlist-URL:
 ```
 http://<server-ip>:8080/playlist.m3u
+```
+3. Einstellungen → EPG-URL *(sobald verfügbar)*:
+```
+http://<server-ip>:8080/epg.xml
 ```
 
 ### Enigma2 (z.B. VU+)
