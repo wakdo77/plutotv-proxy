@@ -23,7 +23,8 @@ import base64
 import urllib.parse
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from html import escape as _xe
 import argparse
 
 import requests
@@ -58,6 +59,10 @@ PLUTO_BOOT_URL = (
     "&lastAppLaunchDate={dt}"
     "&clientTime={dt}"
 )
+
+PLUTO_EPG_DURATION_MIN  = 720   # Minuten EPG-Dauer pro Request (kann je nach Bedarf angepasst werden)
+PLUTO_EPG_BATCH_SIZE    = 100   # Kanal-IDs pro API-Request (URL-Länge begrenzen)
+PLUTO_EPG_CACHE_SECONDS = 1800  # Cache-Lebensdauer in Sekunden (30 Minuten)
 
 # ─── PlutoTV Session ─────────────────────────────────────────────────────────
 
@@ -145,6 +150,24 @@ class PlutoSession:
             print(f"[Pluto] {len(self.channels)} Kanäle geladen.")
         else:
             print(f"[Pluto] Kanäle konnten nicht geladen werden: {resp.status_code}")
+
+    # ── EPG-Funktionalität ─────────────────────────────
+
+    def _fetch_epg_batch(self, channel_ids: list[str]) -> dict:
+        """Holt EPG-Timelines für einen Batch von Kanal-IDs vom PlutoTV-API."""
+        last_hour_iso = _iso_time(encode=False)
+        url = (
+            self.channels_server
+            + "/v2/guide/timelines"
+            + f"?start={last_hour_iso}"
+            + f"&channelIds={','.join(channel_ids)}"
+            + f"&duration={PLUTO_EPG_DURATION_MIN}"
+        )
+        resp = self.http.get(url, headers={"Authorization": f"Bearer {self.jwt}"})
+        if not resp.ok:
+            print(f"[EPG] Fehler {resp.status_code} für Batch ({len(channel_ids)} Kanäle)")
+            return []
+        return resp.json().get("data", [])
 
     # ── JWT-Refresh ───────────────────────────────────────────────────────────
 
@@ -235,15 +258,33 @@ def make_segments_absolute(playlist_content: str, playlist_url: str) -> str:
     return "\n".join(result)
 
 
-def _iso_now() -> str:
+def _iso_now(encode: bool = True) -> str:
     """Gibt den aktuellen UTC-Zeitstempel URL-codiert im PlutoTV-Format zurück."""
     dt = (
         datetime.now(timezone.utc)
         .isoformat(timespec="milliseconds")
         .replace("+00:00", "Z")
     )
-    return urllib.parse.quote(dt, safe="")
+    if encode:
+        return urllib.parse.quote(dt, safe="")
+    return dt
 
+def _iso_time(iso_time: str = None, encode: bool = False) -> str:
+    """Gibt PlutoTV-ISO-Format MIT IMMER .000 Millisekunden: bei iso_time parsen, sonst UTC minus 1 Stunde."""
+    if iso_time is None:
+        # Aktuelle UTC minus 1 Stunde, Sekunden/Ms auf 0
+        dt = datetime.now(timezone.utc) - timedelta(hours=1)
+        dt = dt.replace(second=0, microsecond=0)
+    else:
+        # Parse und explizit Sekunden/Ms auf 0
+        dt_naive = datetime.strptime(iso_time, "%Y-%m-%d %H:%M:%S").replace(microsecond=0)
+        dt = dt_naive.replace(tzinfo=timezone.utc)
+    
+    iso_str = dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    
+    if encode:
+        return urllib.parse.quote(iso_str, safe="")
+    return iso_str
 
 def get_logo(ch: dict) -> str:
     """Extrahiert die Logo-URL aus einem Channel-Objekt (robust für verschiedene Formate)."""
@@ -262,7 +303,100 @@ def get_logo(ch: dict) -> str:
     return ""
 
 
-# ─── Flask App ────────────────────────────────────────────────────────────────
+# ─── EPG Builder ───────────────────────────────────────────────────────────────
+
+def _xmltv_time(iso_str: str) -> str:
+    """
+    Konvertiert ISO 8601 UTC-String ins XMLTV-Zeitformat: YYYYMMDDHHmmss +0000.
+    Python 3.10-kompatibel: strptime statt fromisoformat (3-stellige ms-Problem).
+    """
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            return datetime.strptime(iso_str, fmt).strftime("%Y%m%d%H%M%S +0000")
+        except ValueError:
+            continue
+    # Fallback für Python 3.11+
+    return datetime.fromisoformat(iso_str.replace("Z", "+00:00")).strftime("%Y%m%d%H%M%S +0000")
+
+
+def build_epg_xml() -> str:
+    """
+    Holt EPG-Daten für alle Kanäle in Batches und gibt einen XMLTV-String zurück.
+    Zeitfenster: 2h zurück bis +10h (via _iso_time Default + PLUTO_EPG_DURATION_MIN).
+    """
+    all_ids = [ch.get("id", "") for ch in pluto.channels if ch.get("id")]
+
+    # EPG in Batches abrufen, positional zu channel_ids zuordnen
+    timelines_by_channel: dict[str, list] = {}
+    for i in range(0, len(all_ids), PLUTO_EPG_BATCH_SIZE):
+        batch_ids  = all_ids[i : i + PLUTO_EPG_BATCH_SIZE]
+        batch_data = pluto._fetch_epg_batch(batch_ids)
+        for j, item in enumerate(batch_data):
+            ch_id = item.get("channelId") or (batch_ids[j] if j < len(batch_ids) else None)
+            if ch_id:
+                timelines_by_channel[ch_id] = item.get("timelines", [])
+
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<tv generator-info-name="plutotv-proxy">',
+    ]
+
+    # <channel>-Einträge
+    for ch in pluto.channels:
+        ch_id = ch.get("id", "")
+        name  = _xe(ch.get("name", ch_id))
+        logo  = get_logo(ch)
+        lines.append(f'  <channel id="{_xe(ch_id, quote=True)}">')
+        lines.append(f'    <display-name>{name}</display-name>')
+        if logo:
+            lines.append(f'    <icon src="{_xe(logo, quote=True)}"/>')
+        lines.append('  </channel>')
+
+    # <programme>-Einträge
+    for ch in pluto.channels:
+        ch_id = ch.get("id", "")
+        for tl in timelines_by_channel.get(ch_id, []):
+            start = _xmltv_time(tl.get("start", ""))
+            stop  = _xmltv_time(tl.get("stop",  ""))
+            title = _xe(tl.get("title", ""))
+
+            ep      = tl.get("episode", {})
+            desc    = _xe(ep.get("description", ""))
+            genre   = _xe(ep.get("genre", ""))
+            ep_name = _xe(ep.get("name", ""))
+            season  = ep.get("season",  0)
+            ep_num  = ep.get("number",  0)
+            rating  = _xe(ep.get("rating", ""))
+            thumb   = ep.get("thumbnail", {}).get("path", "")
+            series  = ep.get("series", {}).get("name", "")
+
+            lines.append(f'  <programme start="{start}" stop="{stop}" channel="{_xe(ch_id, quote=True)}">')
+            lines.append(f'    <title>{title}</title>')
+            if ep_name:
+                lines.append(f'    <sub-title>{ep_name}</sub-title>')
+            if desc:
+                lines.append(f'    <desc>{desc}</desc>')
+            if series and ep_num:
+                s = max(0, season - 1)
+                e = max(0, ep_num  - 1)
+                lines.append(f'    <episode-num system="xmltv_ns">{s}.{e}.0/1</episode-num>')
+            if genre:
+                lines.append(f'    <category>{genre}</category>')
+            if thumb:
+                lines.append(f'    <icon src="{_xe(thumb, quote=True)}"/>')
+            if rating:
+                lines.append(f'    <rating><value>{rating}</value></rating>')
+            lines.append('  </programme>')
+
+    lines.append('</tv>')
+    return '\n'.join(lines)
+
+
+# ─── Flask App ───────────────────────────────────────────────────────────────────
+
+# EPG Cache
+_epg_cache: str = ""
+_epg_cache_time: float = 0.0
 
 app = Flask(__name__)
 pluto = PlutoSession()   # Einmalig beim Start initialisieren
@@ -342,7 +476,23 @@ def live_stream(channel_id: str):
 
     return Response(content, mimetype="application/vnd.apple.mpegurl")
 
+@app.route("/epg.xml")
+def epg_xml():
+    """
+    XMLTV EPG-Feed für alle PlutoTV-Kanäle.
+    Kompatibel mit Kodi IPTV Simple Client (EPG-URL-Einstellung).
+    Gecacht für PLUTO_EPG_CACHE_SECONDS Sekunden (Standard: 30 Minuten).
+    """
+    global _epg_cache, _epg_cache_time
 
+    pluto.ensure_valid()
+    if not _epg_cache or time.time() - _epg_cache_time > PLUTO_EPG_CACHE_SECONDS:
+        print("[EPG] Aktualisiere EPG-Cache ...")
+        _epg_cache      = build_epg_xml()
+        _epg_cache_time = time.time()
+        print(f"[EPG] Cache aktualisiert ({len(_epg_cache):,} Bytes).")
+
+    return Response(_epg_cache, mimetype="application/xml")
 # ─── Start ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
