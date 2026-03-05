@@ -32,7 +32,7 @@ from flask import Flask, Response, abort
 
 # ─── Konfiguration ───────────────────────────────────────────────────────────
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 HOST = "0.0.0.0"
 
@@ -242,6 +242,10 @@ def make_segments_absolute(playlist_content: str, playlist_url: str) -> str:
     Der Player kann Segmente dann direkt vom PlutoTV-CDN laden (kein JWT nötig).
 
     playlist_url: die URL von der die Playlist abgerufen wurde (für relative Auflösung).
+
+    Besonderheit: #EXT-X-ENDLIST wird herausgefiltert.
+    Dieser Tag signalisiert dem Player das Stream-Ende (VOD-Verhalten) und tritt
+    bei PlutoTV an Sendungsgrenzen auf, was den Stream in Kodi stoppt.
     """
     # Basis: Verzeichnis der Playlist-URL (ohne Query-String)
     base = playlist_url.split("?")[0].rsplit("/", 1)[0] + "/"
@@ -249,6 +253,13 @@ def make_segments_absolute(playlist_content: str, playlist_url: str) -> str:
     result = []
     for line in playlist_content.splitlines():
         clean = line.strip()
+
+        # #EXT-X-ENDLIST herausfiltern: PlutoTV sendet zwischen Sendungen eine leere
+        # Playlist mit diesem Tag, was Kodi den Stream stoppen lässt.
+        if clean == "#EXT-X-ENDLIST":
+            print("[Proxy] #EXT-X-ENDLIST gefunden - entfernt, um Stream-Stop in Kodi zu verhindern.")
+            continue
+
         # Segment-Zeilen: nicht leer, kein '#'
         if clean and not clean.startswith("#"):
             if not clean.startswith("http"):
@@ -473,7 +484,7 @@ def live_stream(channel_id: str):
         print(f"[Proxy] Varianten-Fehler {v_resp.status_code} ({best['bandwidth']} bps)")
         abort(v_resp.status_code)
 
-    # 4. Segment-URLs zu absoluten CDN-URLs umschreiben
+    # 4.
     content = make_segments_absolute(v_resp.text, v_url)
 
     return Response(content, mimetype="application/vnd.apple.mpegurl")
