@@ -32,6 +32,8 @@ from flask import Flask, Response, abort
 
 # ─── Konfiguration ───────────────────────────────────────────────────────────
 
+__version__ = "0.5.0"
+
 HOST = "0.0.0.0"
 
 PLUTO_USER_AGENT = (
@@ -520,9 +522,10 @@ if __name__ == "__main__":
     PROXY_BASE = f"http://{args.ip}:{args.port}"
 
     print(f"\n{'='*50}")
-    print(f"  PlutoTV Stream Proxy")
+    print(f"  PlutoTV Stream Proxy  v{__version__}")
     print(f"{'='*50}")
     print(f"  Playlist   : {PROXY_BASE}/playlist.m3u")
+    print(f"  EPG        : {PROXY_BASE}/epg.xml")
     print(f"  Test-Stream: {PROXY_BASE}/live/69776b58036e883f39e5ab8a.m3u8")
     print(f"  Debug      : {args.debug}")
     print(f"{'='*50}\n")
