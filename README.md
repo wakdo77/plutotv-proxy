@@ -64,7 +64,7 @@ Beim Start werden Session-Daten geladen und die verfügbaren Kanäle abgerufen.
 |---|---|
 | `GET /playlist.m3u` | M3U-Playlist aller Kanäle |
 | `GET /live/<channel_id>.m3u8` | Live-HLS-Stream (beste Qualität, AES-128) |
-| `GET /epg.xml` | XMLTV EPG-Feed *(in Entwicklung)* |
+| `GET /epg.xml` | XMLTV EPG-Feed (30min Cache, 12h Fenster) |
 
 ## Einrichtung in Playern
 
@@ -84,7 +84,7 @@ http://localhost:8080/playlist.m3u
 ```
 http://<server-ip>:8080/playlist.m3u
 ```
-3. Einstellungen → EPG-URL *(sobald verfügbar)*:
+3. Einstellungen → EPG-URL:
 ```
 http://<server-ip>:8080/epg.xml
 ```
