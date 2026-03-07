@@ -1,6 +1,6 @@
 # plutotv-proxy
 
-![Version](https://img.shields.io/badge/version-v0.5.1-blue)
+![Version](https://img.shields.io/badge/version-v0.5.2-blue)
 
 Lokaler HTTP-Proxy, der PlutoTV FAST-Kanäle als Standard-HLS-Streams bereitstellt.  
 Kompatibel mit **VLC**, **Kodi (IPTV Simple Client)** und **Enigma2**.

@@ -6,6 +6,7 @@ Lokaler HTTP-Proxy, der PlutoTV-Livestreams für VLC, Kodi IPTV Simple und Enigm
 Endpunkte:
   GET /playlist.m3u          - M3U-Playlist aller Kanäle
   GET /live/<channel_id>     - Live-HLS-Stream (beste Variante, Segmente direkt vom CDN)
+  GET /epg.xml               - XMLTV EPG-Feed für alle Kanäle (30 Min Cache)
 
 Ablauf pro Stream-Request:
   1. Master-Playlist von PlutoTV holen (JWT wird serverseitig ergänzt)
@@ -32,7 +33,7 @@ from flask import Flask, Response, abort
 
 # ─── Konfiguration ───────────────────────────────────────────────────────────
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 
 HOST = "0.0.0.0"
 
@@ -257,7 +258,6 @@ def make_segments_absolute(playlist_content: str, playlist_url: str) -> str:
         # #EXT-X-ENDLIST herausfiltern: PlutoTV sendet zwischen Sendungen eine leere
         # Playlist mit diesem Tag, was Kodi den Stream stoppen lässt.
         if clean == "#EXT-X-ENDLIST":
-            print("[Proxy] #EXT-X-ENDLIST gefunden - entfernt, um Stream-Stop in Kodi zu verhindern.")
             continue
 
         # Segment-Zeilen: nicht leer, kein '#'
@@ -466,6 +466,7 @@ def live_stream(channel_id: str):
 
     # 1. Master-Playlist holen
     m_url = pluto.master_url(channel_id)
+    print("[Proxy] Hole Master-Playlist für Kanal:", channel_id)
     resp  = pluto.http.get(m_url)
     if not resp.ok:
         print(f"[Proxy] Master-Fehler {resp.status_code} für {channel_id}")
@@ -478,15 +479,32 @@ def live_stream(channel_id: str):
         abort(404)
 
     # 3. Varianten-Playlist fetchen
-    v_url   = pluto.variant_url(channel_id, best["uri"])
-    v_resp  = pluto.http.get(v_url)
+    v_url  = pluto.variant_url(channel_id, best["uri"])
+    v_resp = pluto.http.get(v_url)
     if not v_resp.ok:
         print(f"[Proxy] Varianten-Fehler {v_resp.status_code} ({best['bandwidth']} bps)")
         abort(v_resp.status_code)
 
+    # Fallback: leere Playlist (nur #EXT-X-ENDLIST, keine Segmente) →
+    # Manche Kanäle benötigen den 'livestitch'-Endpunkt statt des Standard-Endpunkts.
+    has_segments = any(
+        l.strip() and not l.strip().startswith("#")
+        for l in v_resp.text.splitlines()
+    )
+    if not has_segments:
+        print(f"[Proxy] Leere Playlist - versuche livestitch-Fallback für '{channel_id}' ...")
+        ls_id   = channel_id + "livestitch"
+        ls_url  = pluto.variant_url(ls_id, best["uri"])
+        ls_resp = pluto.http.get(ls_url)
+        if ls_resp.ok and any(
+            l.strip() and not l.strip().startswith("#")
+            for l in ls_resp.text.splitlines()
+        ):
+            print(f"[Proxy] livestitch-Fallback erfolgreich für '{channel_id}'")
+            v_url, v_resp = ls_url, ls_resp
+
     # 4.
     content = make_segments_absolute(v_resp.text, v_url)
-
     return Response(content, mimetype="application/vnd.apple.mpegurl")
 
 @app.route("/epg.xml")
