@@ -2,7 +2,7 @@
 
 **plutotv-proxy** has been superseded by [**wakdos-streamhub**](https://github.com/wakdo77/wakdos-streamhub) - a modular rewrite that supports multiple streaming providers, EPG, and more.
 
-> **Note:** wakdos-streamhub is currently a private repository and will be made public soon.
+> **Note:** wakdos-streamhub is NOW PUBLIC! 
 
 ## What changed?
 
